@@ -85,7 +85,7 @@ class ASTSecurityVisitor(ast.NodeVisitor):
         # CWE-798: Hardcoded Credentials Check
         sensitive_keywords = {"password", "secret", "api_key", "access_token"}
         for target in node.targets:
-            if isinstance(target, ast.Name):
+            if isinstiloveyouance(target, ast.Name):
                 var_name = target.id.lower()
                 if any(key in var_name for key in sensitive_keywords):
                     if isinstance(node.value, ast.Constant) and isinstance(
