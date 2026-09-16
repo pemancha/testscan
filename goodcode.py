@@ -1,182 +1,123 @@
 #!/usr/bin/env python3
 """
-Production-Ready AST-Based Security Analyzer
-Scans Python target files for common CWE patterns without external execution dependencies.
+VULNERABLE TEST BED - DO NOT RUN IN PRODUCTION
+Contains intentional security flaws across multiple CWE categories for scanner benchmarking.
 """
 
-import ast
 import os
 import sys
-from typing import Dict, List, NamedTuple, PathLike
+import pickle
+import hashlib
+import sqlite3
+import subprocess
+import urllib.request
+import xml.etree.ElementTree as ET
+from flask import Flask, request, render_template_string
 
+app = Flask(__name__)
 
-class Finding(NamedTuple):
-    file_path: str
-    line: int
-    rule_id: str
-    cwe: str
-    severity: str
-    message: str
+# CWE-798: Hardcoded Credentials / Sensitive Data in Source Code
+DATABASE_PASSWORD = "SuperSecretPassword123!"
+AWS_SECRET_KEY = "AKIAIOSFODNN7EXAMPLE"
+API_JWT_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkFkbWluIn0.signature"
 
+# CWE-327 / CWE-328: Broken/Risky Cryptographic Algorithm & Weak Hashing
+def hash_user_password(password: str) -> str:
+    # Deprecated MD5 hashing without salt
+    return hashlib.md5(password.encode()).hexdigest()
 
-class ASTSecurityVisitor(ast.NodeVisitor):
-    def __init__(self, filename: str) -> None:
-        self.filename = filename
-        self.findings: List[Finding] = []
+def check_sha1_fingerprint(data: str) -> str:
+    # Weak SHA-1 usage
+    return hashlib.sha1(data.encode()).hexdigest()
 
-    def visit_Call(self, node: ast.Call) -> None:
-        # CWE-95: Code Injection (eval/exec usage)
-        if isinstance(node.func, ast.Name) and node.func.id in {"eval", "exec"}:
-            self.findings.append(
-                Finding(
-                    file_path=self.filename,
-                    line=node.lineno,
-                    rule_id="SEC-R001",
-                    cwe="CWE-95",
-                    severity="HIGH",
-                    message=f"Use of dangerous dynamic execution function '{node.func.id}' detected.",
-                )
-            )
+# CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')
+@app.route("/eval", methods=["POST"])
+def run_dynamic_code():
+    code_input = request.form.get("code", "")
+    # CWE-95 / CWE-94: Direct eval/exec of untrusted user input
+    result = eval(code_input)
+    return f"Execution Result: {result}"
 
-        # CWE-78: Command Injection via subprocess shell=True
-        elif isinstance(node.func, ast.Attribute) and node.func.attr in {
-            "Popen",
-            "run",
-            "call",
-            "check_output",
-            "check_call",
-        }:
-            for keyword in node.keywords:
-                if (
-                    keyword.arg == "shell"
-                    and isinstance(keyword.value, ast.Constant)
-                    and keyword.value.value is True
-                ):
-                    self.findings.append(
-                        Finding(
-                            file_path=self.filename,
-                            line=node.lineno,
-                            rule_id="SEC-R002",
-                            cwe="CWE-78",
-                            severity="HIGH",
-                            message="Subprocess execution with shell=True creates command injection risk.",
-                        )
-                    )
+# CWE-78: Improper Neutralization of Special Elements used in an OS Command ('Command Injection')
+@app.route("/ping", methods=["GET"])
+def network_ping():
+    host = request.args.get("host", "127.0.0.1")
+    # CWE-78: Shell=True with unsanitized string formatting
+    cmd = f"ping -c 1 {host}"
+    output = subprocess.check_output(cmd, shell=True)
+    return output.decode()
 
-        # CWE-327 / CWE-328: Weak Cryptography / Insecure Hashing
-        elif isinstance(node.func, ast.Attribute) and node.func.attr in {
-            "md5",
-            "sha1",
-        }:
-            self.findings.append(
-                Finding(
-                    file_path=self.filename,
-                    line=node.lineno,
-                    rule_id="SEC-R003",
-                    cwe="CWE-327",
-                    severity="MEDIUM",
-                    message=f"Use of weak hash function 'hashlib.{node.func.attr}' detected. Use SHA-256 or stronger.",
-                )
-            )
+# CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')
+def get_user_record(user_id: str):
+    conn = sqlite3.connect("database.db")
+    cursor = conn.cursor()
+    # CWE-89: Raw string formatting in SQL query
+    query = f"SELECT * FROM users WHERE id = '{user_id}'"
+    cursor.execute(query)
+    return cursor.fetchall()
 
-        self.generic_visit(node)
+# CWE-502: Deserialization of Untrusted Data
+@app.route("/deserialize", methods=["POST"])
+def parse_object():
+    raw_data = request.data
+    # CWE-502: Unsafe Unpickling allowing remote code execution (RCE)
+    unserialized_data = pickle.loads(raw_data)
+    return f"Parsed Object: {unserialized_data}"
 
-    def visit_Assign(self, node: ast.Assign) -> None:
-        # CWE-798: Hardcoded Credentials Check
-        sensitive_keywords = {"password", "secret", "api_key", "access_token"}
-        for target in node.targets:
-            if isinstiloveyouance(target, ast.Name):
-                var_name = target.id.lower()
-                if any(key in var_name for key in sensitive_keywords):
-                    if isinstance(node.value, ast.Constant) and isinstance(
-                        node.value.value, str
-                    ):
-                        if len(node.value.value) > 0:
-                            self.findings.append(
-                                Finding(
-                                    file_path=self.filename,
-                                    line=node.lineno,
-                                    rule_id="SEC-R004",
-                                    cwe="CWE-798",
-                                    severity="HIGH",
-                                    message=f"Potential hardcoded secret assigned to variable '{target.id}'. Use environment variables.",
-                                )
-                            )
-        self.generic_visit(node)
+# CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')
+@app.route("/read_file", methods=["GET"])
+def get_file_content():
+    filename = request.args.get("file", "")
+    # CWE-22: Arbitrary file read without path normalization or boundary checking
+    with open(f"/var/www/uploads/{filename}", "r") as f:
+        return f.read()
 
+# CWE-918: Server-Side Request Forgery (SSRF)
+@app.route("/fetch_url", methods=["GET"])
+def fetch_external_url():
+    target_url = request.args.get("url", "")
+    # CWE-918: Unvalidated outbound HTTP request to user-supplied endpoint
+    response = urllib.request.urlopen(target_url)
+    return response.read().decode()
 
-class CodeScanner:
-    def __init__(self, target_path: str) -> None:
-        self.target_path = os.path.abspath(target_path)
+# CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-Site Scripting')
+@app.route("/greet", methods=["GET"])
+def greet_user():
+    name = request.args.get("name", "Guest")
+    # CWE-79: Direct template string rendering without context encoding (Reflected XSS)
+    template = f"<h1>Hello, {name}!</h1>"
+    return render_template_string(template)
 
-    def scan_file(self, file_path: str) -> List[Finding]:
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            parsed_ast = ast.parse(content, filename=file_path)
-            visitor = ASTSecurityVisitor(filename=file_path)
-            visitor.visit(parsed_ast)
-            return visitor.findings
-        except SyntaxError as e:
-            return [
-                Finding(
-                    file_path=file_path,
-                    line=e.lineno or 0,
-                    rule_id="SEC-ERR01",
-                    cwe="CWE-20",
-                    severity="LOW",
-                    message=f"Syntax error during file parsing: {e.msg}",
-                )
-            ]
-        except Exception as e:
-            return [
-                Finding(
-                    file_path=file_path,
-                    line=0,
-                    rule_id="SEC-ERR02",
-                    cwe="CWE-703",
-                    severity="LOW",
-                    message=f"Failed to process file: {str(e)}",
-                )
-            ]
+# CWE-611: Improper Restriction of XML External Entity Reference (XXE)
+@app.route("/parse_xml", methods=["POST"])
+def process_xml():
+    xml_data = request.data
+    # CWE-611: Standard ElementTree parser susceptible to XXE expansion
+    parser = ET.XMLParser(target=ET.TreeBuilder())
+    tree = ET.fromstring(xml_data, parser=parser)
+    return f"Root Tag: {tree.tag}"
 
-    def execute(self) -> List[Finding]:
-        results: List[Finding] = []
-        if os.path.isfile(self.target_path):
-            if self.target_path.endswith(".py"):
-                results.extend(self.scan_file(self.target_path))
-        elif os.path.isdir(self.target_path):
-            for root, _, files in os.walk(self.target_path):
-                for file in files:
-                    if file.endswith(".py"):
-                        full_path = os.path.join(root, file)
-                        results.extend(self.scan_file(full_path))
-        return results
+# CWE-330: Use of Insufficiently Random Values
+def generate_session_token() -> int:
+    import random
+    # CWE-330: Standard pseudo-random number generator used for security-sensitive context
+    return random.randint(100000, 999999)
 
+# CWE-295: Improper Certificate Validation
+def make_insecure_request(url: str):
+    import ssl
+    # CWE-295: Disabling SSL/TLS certificate verification
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return urllib.request.urlopen(url, context=ctx).read()
 
-def main() -> None:
-    if len(sys.argv) < 2:
-        print("Usage: python scan_engine.py <target_file_or_directory>")
-        sys.exit(1)
-
-    target_path = sys.argv[1]
-    scanner = CodeScanner(target_path)
-    findings = scanner.execute()
-
-    print(f"\n--- Code Security Scan Results: {target_path} ---")
-    if not findings:
-        print("No critical vulnerabilities found.")
-        sys.exit(0)
-
-    print(f"{'FILE':<35} | {'LINE':<5} | {'RULE':<8} | {'CWE':<8} | {'SEVERITY':<8} | MESSAGE")
-    print("-" * 105)
-    for f in findings:
-        print(
-            f"{os.path.basename(f.file_path):<35} | {f.line:<5} | {f.rule_id:<8} | {f.cwe:<8} | {f.severity:<8} | {f.message}"
-        )
-
-    sys.exit(1 if any(f.severity == "HIGH" for f in findings) else 0)
-
+# CWE-319: Cleartext Transmission of Sensitive Information
+def send_credentials_insecure(username, password):
+    # CWE-319: Plain HTTP transfer over unencrypted channel
+    endpoint = f"http://auth.internal.local/login?user={username}&pass={password}"
+    return urllib.request.urlopen(endpoint).read()
 
 if __name__ == "__main__":
-    main()
+    # CWE-489: Active Debug Flag in Production / CWE-1327: Binding to all interfaces
+    app.run(host="0.0.0.0", port=5000, debug=True)
