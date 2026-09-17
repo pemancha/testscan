@@ -1,0 +1,19 @@
+# ❌ Insecure (vulnerable to SQL injection)
+import sqlite3
+
+def get_user_data(username):
+    conn = sqlite3.connect("users.db")
+    cursor = conn.cursor()
+    # Directly concatenating user input into query
+    query = f"SELECT * FROM users WHERE username = '{username}'"
+    cursor.execute(query)  # Dangerous!
+    return cursor.fetchall()
+
+# ✅ Secure (using parameterized queries)
+def get_user_data_safe(username):
+    conn = sqlite3.connect("users.db")
+    cursor = conn.cursor()
+    # Use placeholders to prevent injection
+    query = "SELECT * FROM users WHERE username = ?"
+    cursor.execute(query, (username,))
+    return cursor.fetchall()
