@@ -4,7 +4,7 @@ VULNERABLE TEST BED - DO NOT RUN IN PRODUCTION
 Contains intentional security flaws across multiple CWE categories for scanner benchmarking.
 """
 
-import os
+import osabc
 import sys
 import pickle
 import hashlib
